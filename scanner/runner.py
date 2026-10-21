@@ -17,8 +17,11 @@ from scanner.text import canonicalize_url, matches_exclude, titles_match
 
 log = logging.getLogger(__name__)
 
-GRACE = timedelta(minutes=5)
+MIN_GRACE = timedelta(minutes=5)
 OPEN_WINDOW = timedelta(hours=48)
+RETENTION = timedelta(days=30)
+MAX_URL_LEN = 2000
+MAX_OUTLET_LEN = 200
 BATCH_SIZE = 15
 MAX_OPEN_STORIES = 40
 
@@ -44,7 +47,10 @@ def is_due(segment: Segment, now: datetime) -> bool:
         return False
     if segment.last_run_at is None:
         return True
-    return now >= segment.last_run_at + timedelta(minutes=segment.interval_minutes) - GRACE
+    interval = timedelta(minutes=segment.interval_minutes)
+    # GitHub cron often starts 10-20 min late; a quarter-interval grace keeps the cadence from slipping.
+    grace = max(MIN_GRACE, interval / 4)
+    return now >= segment.last_run_at + interval - grace
 
 
 def _chunks(items: Sequence, size: int):
@@ -82,8 +88,9 @@ def _fetch_all(definition: SegmentDefinition, sources: Mapping[str, Source], htt
 
 def _add_article(session: Session, story: Story, canonical: str, raw: RawArticle, now: datetime) -> None:
     session.add(Article(
-        story=story, segment_id=story.segment_id, source=raw.source, outlet=raw.outlet, title=raw.title,
-        url=raw.url, canonical_url=canonical, published_at=raw.published_at, snippet=raw.snippet,
+        story=story, segment_id=story.segment_id, source=raw.source, outlet=raw.outlet[:MAX_OUTLET_LEN],
+        title=raw.title, url=raw.url, canonical_url=canonical[:MAX_URL_LEN],
+        published_at=min(raw.published_at, now) if raw.published_at else None, snippet=raw.snippet,
         engagement=raw.engagement, first_seen=now, last_seen=now,
     ))
 
@@ -99,7 +106,7 @@ def _new_story(session: Session, segment: Segment, run: Run, headline: str, now:
 def _open_stories(session: Session, segment: Segment, now: datetime) -> list[Story]:
     return list(session.scalars(
         select(Story)
-        .where(Story.segment_id == segment.id, Story.dismissed.is_(False), Story.last_seen >= now - OPEN_WINDOW)
+        .where(Story.segment_id == segment.id, Story.last_seen >= now - OPEN_WINDOW)
         .order_by(Story.last_seen.desc())
         .limit(MAX_OPEN_STORIES)
     ))
@@ -142,7 +149,7 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
     for r in raws:
         if matches_exclude(f"{r.title} {r.snippet}", definition.exclude):
             continue
-        canonical = canonicalize_url(r.url)
+        canonical = canonicalize_url(r.url)[:MAX_URL_LEN]
         if canonical and canonical not in unique:
             unique[canonical] = r
 
@@ -176,11 +183,15 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
         Story.segment_id == segment.id, Story.status == "pending", Story.dismissed.is_(False))))
     pending.sort(key=lambda s: score_story(s, scoring, now).buzz, reverse=True)
     pending_by_key = {f"p{s.id}": s for s in pending[:cap]}
+    merged_away: set[int] = set()
     for chunk in _chunks(list(pending_by_key.values()), BATCH_SIZE):
         if budget.exhausted:
             break
+        chunk_ids = {s.id for s in chunk}
+        refs = [OpenStory(s.id, s.headline) for s in open_stories
+                if s.id not in chunk_ids and s.id not in merged_away]
         try:
-            decisions, tokens = classify_batch(llm, model, definition, [_story_candidate(s) for s in chunk], [])
+            decisions, tokens = classify_batch(llm, model, definition, [_story_candidate(s) for s in chunk], refs)
         except LLMError as exc:
             errors.append({"source": "llm", "message": str(exc)[:300]})
             ai_ok = False
@@ -188,9 +199,24 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
         budget.spend(tokens)
         sent += len(chunk)
         for d in decisions:
-            if d.match is not None and d.key in pending_by_key:
-                _apply_score(pending_by_key[d.key], d, version)
+            story = pending_by_key.get(d.key)
+            if story is None:
+                continue
+            target = next((s for s in open_stories if s.id == d.story_id), None) if d.story_id else None
+            if target is not None:
+                for article in list(story.articles):
+                    article.story = target
+                touched[target.id] = grown[target.id] = target
+                touched.pop(story.id, None)
+                grown.pop(story.id, None)
+                merged_away.add(story.id)
+                session.delete(story)
                 run.scored += 1
+            elif d.match is not None:
+                _apply_score(story, d, version)
+                run.scored += 1
+    session.flush()
+    open_stories = [s for s in open_stories if s.id not in merged_away]
 
     decided: dict[int, Decision] = {}
     eligible = list(enumerate(groups))[: max(0, cap - sent)] if ai_ok else []
@@ -209,7 +235,19 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
             decided[int(d.key[1:])] = d
 
     open_by_id = {s.id: s for s in open_stories}
+    story_for_group: dict[int, Story] = {}
+
+    def follows(i: int) -> int | None:
+        d = decided.get(i)
+        if d is None or d.same_as_key is None:
+            return None
+        j = int(d.same_as_key[1:])
+        target = decided.get(j)  # follow only a root (undecided or standalone), never a chain
+        return j if j != i and j < len(groups) and (target is None or target.same_as_key is None) else None
+
     for i, group in enumerate(groups):
+        if follows(i) is not None:
+            continue
         d = decided.get(i)
         if d is not None and d.story_id in open_by_id:
             story = open_by_id[d.story_id]
@@ -217,9 +255,15 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
         else:
             story = _new_story(session, segment, run, group[0][1].title, now)
             run.new_stories += 1
-            if d is not None:
+            if d is not None and d.match is not None:
                 _apply_score(story, d, version)
                 run.scored += 1
+        story_for_group[i] = story
+    for i, group in enumerate(groups):
+        j = follows(i)
+        if j is not None:
+            story_for_group[i] = story_for_group[j]
+        story = story_for_group[i]
         for canonical, r in group:
             _add_article(session, story, canonical, r, now)
         session.flush()
@@ -236,6 +280,9 @@ def run_segment(session: Session, segment: Segment, *, llm: LLMClient, model: st
         story.published_at = min(dates) if dates else None
     run.updated_stories = len(touched)
 
+    for old in session.scalars(select(Story).where(Story.segment_id == segment.id,
+                                                   Story.last_seen < now - RETENTION)):
+        session.delete(old)
     session.flush()
     still_pending = session.scalar(select(func.count()).select_from(Story).where(
         Story.segment_id == segment.id, Story.status == "pending", Story.dismissed.is_(False)))
@@ -282,24 +329,33 @@ def run_due(session_factory: sessionmaker, *, llm: LLMClient, model: str, http: 
 
 
 def rescore_recent(session: Session, segment: Segment, *, llm: LLMClient, model: str, now: datetime,
-                   budget: Budget, hours: int = 48) -> int:
+                   budget: Budget, hours: int = 48) -> tuple[int, int]:
+    """Re-rate recent stories not yet scored against the current definition. Returns (updated, remaining).
+    Commits after every batch so a later rate limit or timeout keeps what was already paid for."""
     definition = segment.get_definition()
+    version = segment.definition_version
     stories = list(session.scalars(
         select(Story)
         .where(Story.segment_id == segment.id, Story.dismissed.is_(False),
                Story.last_seen >= now - timedelta(hours=hours))
         .order_by(Story.last_seen.desc())
     ))
+    stories = [s for s in stories if not (s.status == "scored" and s.scored_version == version)]
     by_key = {f"p{s.id}": s for s in stories}
-    updated = 0
+    updated = sent = 0
     for chunk in _chunks(stories, BATCH_SIZE):
         if budget.exhausted:
             break
-        decisions, tokens = classify_batch(llm, model, definition, [_story_candidate(s) for s in chunk], [])
+        try:
+            decisions, tokens = classify_batch(llm, model, definition, [_story_candidate(s) for s in chunk], [])
+        except LLMError:
+            log.warning("rescore stopped early for segment %s", segment.id, exc_info=True)
+            break
         budget.spend(tokens)
+        sent += len(chunk)
         for d in decisions:
             if d.match is not None and d.key in by_key:
-                _apply_score(by_key[d.key], d, segment.definition_version)
+                _apply_score(by_key[d.key], d, version)
                 updated += 1
-    session.flush()
-    return updated
+        session.commit()
+    return updated, len(stories) - sent

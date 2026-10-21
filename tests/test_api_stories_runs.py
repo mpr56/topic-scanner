@@ -83,4 +83,4 @@ def test_run_now_github_failure_is_502(make_client):
 
 def test_rescore_endpoint(client, seeded, fake_llm):
     fake_llm.queue({"results": []})
-    assert client.post(f"/api/segments/{seeded.segment_id}/rescore").json() == {"rescored": 0}
+    assert client.post(f"/api/segments/{seeded.segment_id}/rescore").json() == {"rescored": 0, "remaining": 0}

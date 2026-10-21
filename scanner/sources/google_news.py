@@ -31,6 +31,8 @@ def build_urls(cfg: SourceConfig) -> list[str]:
 
 def parse_feed(xml: str) -> list[RawArticle]:
     feed = feedparser.parse(xml)
+    if not feed.entries and not feed.version:
+        raise SourceError("Google News returned something that is not an RSS feed")
     articles = []
     for entry in feed.entries:
         outlet = (entry.get("source") or {}).get("title") or "Google News"

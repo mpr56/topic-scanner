@@ -126,7 +126,7 @@ def test_is_due_grace(session, now):
     s = seg(session, ["google_news"])
     s.last_run_at = None; assert is_due(s, now)
     s.last_run_at = now - timedelta(minutes=117); assert is_due(s, now)
-    s.last_run_at = now - timedelta(minutes=110); assert not is_due(s, now)
+    s.last_run_at = now - timedelta(minutes=80); assert not is_due(s, now)
     s.active = False; s.last_run_at = None; assert not is_due(s, now)
 
 
@@ -148,8 +148,8 @@ def test_rescore_recent_updates_version_and_skips_old(session, now):
     s = seg(session, ["google_news"]); s.definition_version = 2
     fresh = make_story(session, s, status="scored", match_score=3, scored_version=1, last_seen=now)
     old = make_story(session, s, status="scored", match_score=3, scored_version=1, last_seen=now - timedelta(hours=72))
-    n = rescore_recent(session, s, llm=FakeLLM({"results": [scored(f"p{fresh.id}", match=9)]}),
-                       model="m", now=now, budget=Budget(10_000))
+    n, _ = rescore_recent(session, s, llm=FakeLLM({"results": [scored(f"p{fresh.id}", match=9)]}),
+                          model="m", now=now, budget=Budget(10_000))
     assert n == 1 and (fresh.match_score, fresh.scored_version) == (9, 2) and old.scored_version == 1
 
 
@@ -160,3 +160,90 @@ def test_story_published_is_earliest_article(session, now):
            raw("Tesla Roadster flies", "https://r.com/1", published=now - timedelta(hours=1)),
            raw("Tesla Roadster flies - BBC", "https://b.com/1", outlet="BBC", published=now - timedelta(hours=3))])}, now)
     assert session.scalars(select(Story)).one().published_at == now - timedelta(hours=3)
+
+
+# --- final-review fixes ---
+
+def test_dismissed_story_absorbs_new_coverage(session, now):
+    s = seg(session, ["google_news"])
+    go(session, s, FakeLLM({"results": [scored("c0")]}),
+       {"google_news": FakeSource("google_news", [raw("Tesla Roadster flies", "https://r.com/1")])}, now)
+    story = session.scalars(select(Story)).one()
+    story.dismissed = True
+    go(session, s, FakeLLM(), {"google_news": FakeSource("google_news",
+       [raw("Tesla Roadster flies - BBC", "https://bbc.com/1", outlet="BBC")])}, now + timedelta(hours=2))
+    assert session.scalar(select(func.count()).select_from(Story)) == 1
+    assert len(story.articles) == 2 and story.dismissed
+
+
+def test_same_run_candidates_merge_via_ai(session, now):
+    s = seg(session, ["google_news"])
+    llm = FakeLLM({"results": [scored("c0"), {"key": "c1", "same_as": "c0", "match": None, "reason": ""}]})
+    run = go(session, s, llm, {"google_news": FakeSource("google_news", [
+        raw("French PM Lecornu resigns", "https://r.com/1"),
+        raw("France's prime minister quits after weeks in office", "https://b.com/1", outlet="BBC")])}, now)
+    story = session.scalars(select(Story)).one()
+    assert len(story.articles) == 2 and run.new_stories == 1 and story.status == "scored"
+
+
+def test_pending_story_can_merge_into_existing(session, now):
+    s = seg(session, ["google_news"], max_new_stories_per_run=1)
+    go(session, s, FakeLLM({"results": [scored("c0")]}), {"google_news": FakeSource("google_news", [
+        raw("Tesla Roadster flies", "https://r.com/1"),
+        raw("Musk's flying car lifts off over California", "https://b.com/1", outlet="BBC")])}, now)
+    main = session.scalars(select(Story).where(Story.status == "scored")).one()
+    pending = session.scalars(select(Story).where(Story.status == "pending")).one()
+    llm = FakeLLM({"results": [{"key": f"p{pending.id}", "same_as": main.id, "match": None, "reason": ""}]})
+    go(session, s, llm, {"google_news": FakeSource("google_news", [])}, now + timedelta(hours=2))
+    assert f"#{main.id}:" in llm.calls[0].user
+    assert session.scalar(select(func.count()).select_from(Story)) == 1 and len(main.articles) == 2
+
+
+def test_is_due_tolerates_late_cron(session, now):
+    s = seg(session, ["google_news"])
+    s.interval_minutes = 60
+    s.last_run_at = now - timedelta(minutes=47); assert is_due(s, now)
+    s.interval_minutes = 120
+    s.last_run_at = now - timedelta(minutes=95); assert is_due(s, now)
+    s.last_run_at = now - timedelta(minutes=80); assert not is_due(s, now)
+
+
+def test_old_stories_pruned(session, now):
+    s = seg(session, ["google_news"])
+    make_story(session, s, first_seen=now - timedelta(days=40), last_seen=now - timedelta(days=31))
+    keep = make_story(session, s, first_seen=now - timedelta(days=5), last_seen=now - timedelta(days=5))
+    go(session, s, FakeLLM(), {"google_news": FakeSource("google_news", [])}, now)
+    assert session.scalars(select(Story)).all() == [keep]
+
+
+def test_long_url_and_outlet_truncated(session, now):
+    s = seg(session, ["google_news"])
+    go(session, s, FakeLLM({"results": [scored("c0")]}), {"google_news": FakeSource("google_news",
+       [raw("Tesla Roadster flies", "https://r.com/" + "a" * 3000, outlet="O" * 300)])}, now)
+    article = session.scalars(select(Story)).one().articles[0]
+    assert len(article.canonical_url) <= 2000 and len(article.outlet) <= 200
+
+
+def test_rescore_skips_current_version(session, now):
+    s = seg(session, ["google_news"])
+    make_story(session, s, status="scored", match_score=3, scored_version=1, last_seen=now)
+    assert rescore_recent(session, s, llm=FakeLLM(), model="m", now=now, budget=Budget(10_000)) == (0, 0)
+
+
+def test_rescore_keeps_progress_on_rate_limit(session, now):
+    s = seg(session, ["google_news"]); s.definition_version = 2
+    stories = [make_story(session, s, status="scored", match_score=3, scored_version=1,
+                          last_seen=now - timedelta(minutes=i)) for i in range(16)]
+    first = stories[:15]
+    llm = FakeLLM({"results": [scored(f"p{st.id}", match=9) for st in first]}, RateLimited("429"))
+    n, remaining = rescore_recent(session, s, llm=llm, model="m", now=now, budget=Budget(10_000))
+    assert (n, remaining) == (15, 1)
+    session.rollback()
+    assert all(st.scored_version == 2 for st in first)
+
+
+def test_future_published_clamped_on_save(session, now):
+    s = seg(session, ["google_news"])
+    go(session, s, FakeLLM({"results": [scored("c0")]}), {"google_news": FakeSource("google_news",
+       [raw("Tesla Roadster flies", "https://r.com/1", published=now + timedelta(hours=10))])}, now)
+    assert session.scalars(select(Story)).one().published_at == now

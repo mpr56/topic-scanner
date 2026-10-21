@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from scanner.llm.base import LLMError, LLMResult, RateLimited
+from scanner.llm.base import LLMError, LLMResult, MalformedOutput, RateLimited
 from scanner.llm.groq import GroqClient
 
 sleeps: list[float] = []
@@ -58,3 +58,9 @@ def test_errors_raise_llm_error(resp):
 def test_missing_key():
     with pytest.raises(LLMError, match="GROQ_API_KEY"):
         GroqClient("").complete_json("s", "u", model="m")
+
+
+def test_json_validate_failed_is_malformed_output():
+    resp = httpx.Response(400, json={"error": {"code": "json_validate_failed", "message": "bad json"}})
+    with pytest.raises(MalformedOutput):
+        make(lambda r: resp).complete_json("s", "u", model="m")

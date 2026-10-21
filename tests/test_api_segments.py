@@ -68,3 +68,15 @@ def test_reanalyze_existing_keeps_saved(client, fake_llm):
     assert r.json()["definition"]["summary"] == "Draft v2"
     assert "Major world events" in fake_llm.calls[-1].user and "only UK" in fake_llm.calls[-1].user
     assert client.get(f"/api/segments/{sid}").json()["definition"]["summary"] == "Major world events"
+
+
+def test_default_session_secret_disables_cookies(make_client):
+    c = make_client(auth=False, session_secret="dev-insecure-change-me", cookie_secure=True)
+    assert c.post("/api/login", json={"password": "pw"}).status_code == 503
+    from itsdangerous import URLSafeTimedSerializer
+    forged = URLSafeTimedSerializer("dev-insecure-change-me", salt="session").dumps("ok")
+    assert c.get("/api/segments", cookies={"ts_session": forged}).status_code == 401
+
+
+def test_segment_name_too_long_is_422(client):
+    assert client.post("/api/segments", json={**BODY, "name": "x" * 201}).status_code == 422

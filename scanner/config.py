@@ -13,6 +13,9 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
+DEFAULT_SESSION_SECRET = "dev-insecure-change-me"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -22,7 +25,7 @@ class Settings(BaseSettings):
     groq_model_score: str = "openai/gpt-oss-20b"
     api_token: str = ""
     app_password: str = ""
-    session_secret: str = "dev-insecure-change-me"
+    session_secret: str = DEFAULT_SESSION_SECRET
     ui_origin: str = "http://localhost:5173"
     cookie_secure: bool = True
     run_token_budget: int = 20000

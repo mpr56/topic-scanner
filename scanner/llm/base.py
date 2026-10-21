@@ -13,6 +13,10 @@ class LLMError(Exception):
     """The provider failed or returned something unusable."""
 
 
+class MalformedOutput(LLMError):
+    """The provider itself rejected the model's output as invalid JSON; worth one retry."""
+
+
 class RateLimited(LLMError):
     """The provider kept rate-limiting us after retries."""
 

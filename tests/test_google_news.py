@@ -51,3 +51,9 @@ def test_fetch_raises_source_error_on_http_failure(now):
     http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503)))
     with pytest.raises(SourceError, match="503"):
         GoogleNewsSource().fetch(SourceConfig(type="google_news", mode="feed"), http, now)
+
+
+def test_non_feed_page_raises():
+    with pytest.raises(SourceError):
+        parse_feed("<html><body>Before you continue to Google</body></html>")
+    assert parse_feed('<?xml version="1.0"?><rss version="2.0"><channel><title>t</title></channel></rss>') == []

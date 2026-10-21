@@ -26,7 +26,7 @@ class DraftOut(BaseModel):
 
 
 class SegmentIn(BaseModel):
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=200)
     examples: list[str] = Field(min_length=1)
     note: str = ""
     definition: SegmentDefinition
@@ -36,7 +36,7 @@ class SegmentIn(BaseModel):
 
 
 class SegmentPatch(BaseModel):
-    name: str | None = Field(None, min_length=1)
+    name: str | None = Field(None, min_length=1, max_length=200)
     examples: list[str] | None = Field(None, min_length=1)
     note: str | None = None
     definition: SegmentDefinition | None = None

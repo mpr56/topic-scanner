@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from scanner.api.auth import require_auth
 from scanner.api.deps import get_segment_or_404, get_session
@@ -30,15 +30,14 @@ def story_out(story: Story, scoring: ScoringConfig, now: datetime) -> StoryOut:
 
 @router.get("/segments/{segment_id}/stories", response_model=list[StoryOut])
 def list_stories(request: Request, segment_id: int, min_score: float | None = None,
-                 since_hours: int | None = Query(None, ge=1), include_dismissed: bool = False,
+                 since_hours: int = Query(168, ge=1, le=24 * 30), include_dismissed: bool = False,
                  limit: int = Query(100, ge=1, le=500), session: Session = Depends(get_session)):
     segment = get_segment_or_404(session, segment_id)
     now = request.app.state.clock()
-    query = select(Story).where(Story.segment_id == segment.id)
+    query = (select(Story).options(selectinload(Story.articles))
+             .where(Story.segment_id == segment.id, Story.last_seen >= now - timedelta(hours=since_hours)))
     if not include_dismissed:
         query = query.where(Story.dismissed.is_(False))
-    if since_hours is not None:
-        query = query.where(Story.last_seen >= now - timedelta(hours=since_hours))
     scoring = segment.get_scoring()
     rows = [story_out(s, scoring, now) for s in session.scalars(query)]
     if min_score is not None:
@@ -71,6 +70,6 @@ def rescore(request: Request, segment_id: int, hours: int = Query(48, ge=1, le=2
             session: Session = Depends(get_session)):
     state = request.app.state
     segment = get_segment_or_404(session, segment_id)
-    n = rescore_recent(session, segment, llm=state.llm, model=state.settings.groq_model_score,
-                       now=state.clock(), budget=Budget(state.settings.run_token_budget), hours=hours)
-    return {"rescored": n}
+    n, remaining = rescore_recent(session, segment, llm=state.llm, model=state.settings.groq_model_score,
+                                  now=state.clock(), budget=Budget(state.settings.run_token_budget), hours=hours)
+    return {"rescored": n, "remaining": remaining}

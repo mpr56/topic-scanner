@@ -6,7 +6,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
-from scanner.llm.base import LLMClient, LLMError
+from scanner.llm.base import LLMClient, LLMError, MalformedOutput
 from scanner.schemas import SegmentDefinition, SourceConfig
 from scanner.sources.google_news import SECTIONS
 
@@ -36,11 +36,12 @@ Respond with a JSON object only:
 CLASSIFY_SYSTEM = """You sort and rate news items for a personal trend tracker.
 For each candidate:
 1. If it reports the same real-world event as one of the OPEN STORIES, set "same_as" to that story's number.
-2. Otherwise set "same_as" to null and rate "match" from 0 to 10: how well it fits the definition.
+2. Else if it reports the same event as an EARLIER candidate in this list, set "same_as" to that candidate's key.
+3. Otherwise set "same_as" to null and rate "match" from 0 to 10: how well it fits the definition.
    If the definition is about a kind of story (e.g. major news) rather than a topic, "match" means how
    major and widely relevant the event is. Give a one-line "reason".
 Respond with a JSON object only:
-{"results": [{"key": "<candidate key>", "same_as": <number or null>, "match": <0-10>, "reason": "..."}]}
+{"results": [{"key": "<candidate key>", "same_as": <story number, earlier candidate key, or null>, "match": <0-10>, "reason": "..."}]}
 Include every candidate key exactly once."""
 
 
@@ -64,6 +65,7 @@ class Decision:
     story_id: int | None
     match: float | None
     reason: str | None
+    same_as_key: str | None = None  # another candidate in the same batch describing the same event
 
 
 class _DraftOut(BaseModel):
@@ -82,7 +84,12 @@ def _call_validated(llm: LLMClient, model: str, system: str, user: str,
     """Call the model; if the reply doesn't parse, retry once, then give up with LLMError."""
     tokens = 0
     for attempt in range(2):
-        result = llm.complete_json(system, user, model=model)
+        try:
+            result = llm.complete_json(system, user, model=model)
+        except MalformedOutput:
+            if attempt == 1:
+                raise
+            continue
         tokens += result.tokens
         try:
             return parse(result.data), tokens
@@ -148,7 +155,16 @@ def classify_batch(llm: LLMClient, model: str, definition: SegmentDefinition,
             if key not in keys or key in out:
                 continue
             same_as = item.get("same_as")
-            if isinstance(same_as, int) and same_as in open_ids:
+            if isinstance(same_as, str):
+                stripped = same_as.strip()
+                if stripped in keys:
+                    if stripped != key:
+                        out[key] = Decision(key, None, None, None, same_as_key=stripped)
+                        continue
+                    same_as = None
+                elif stripped.lstrip("#").isdigit():
+                    same_as = int(stripped.lstrip("#"))
+            if isinstance(same_as, int) and not isinstance(same_as, bool) and same_as in open_ids:
                 out[key] = Decision(key, same_as, None, None)
                 continue
             try:

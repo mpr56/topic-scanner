@@ -61,3 +61,23 @@ def test_classify_sanitises_response():
 
 def test_classify_empty_makes_no_call():
     assert classify_batch(FakeLLM(), "m", SegmentDefinition(summary="S"), [], []) == ([], 0)
+
+
+def test_malformed_provider_output_is_retried():
+    from scanner.llm.base import MalformedOutput
+    assert analyze_segment(FakeLLM(MalformedOutput("bad"), GOOD), "m", "n", ["x"])[0].summary == "Major world events"
+
+
+def test_classify_same_as_strings():
+    llm = FakeLLM({"results": [
+        {"key": "c0", "same_as": "7", "match": 9, "reason": ""},
+        {"key": "c1", "same_as": "#7", "match": 9, "reason": ""},
+        {"key": "c2", "same_as": "c0", "match": None, "reason": ""},
+        {"key": "c3", "same_as": "c3", "match": 4, "reason": "self"},
+    ]})
+    cands = [Candidate(f"c{i}", f"t{i}", "", "google_news") for i in range(4)]
+    out, _ = classify_batch(llm, "m", SegmentDefinition(summary="S"), cands, [OpenStory(7, "x")])
+    by = {d.key: d for d in out}
+    assert by["c0"].story_id == 7 and by["c1"].story_id == 7
+    assert by["c2"].same_as_key == "c0" and by["c2"].story_id is None
+    assert by["c3"].same_as_key is None and by["c3"].match == 4

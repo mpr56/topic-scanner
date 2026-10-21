@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 import httpx
 
-from scanner.llm.base import LLMError, LLMResult, RateLimited
+from scanner.llm.base import LLMError, LLMResult, MalformedOutput, RateLimited
 
 URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_RETRY_SLEEP = 20.0
@@ -43,6 +43,8 @@ class GroqClient:
             except ValueError:
                 wait = 2.0
             self.sleep(min(wait, MAX_RETRY_SLEEP))
+        if resp.status_code == 400 and "json_validate_failed" in resp.text:
+            raise MalformedOutput("Groq could not produce valid JSON")
         if not resp.is_success:
             raise LLMError(f"Groq returned {resp.status_code}: {resp.text[:200]}")
         try:
