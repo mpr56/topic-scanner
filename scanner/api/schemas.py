@@ -77,3 +77,39 @@ class SegmentOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_run: RunOut | None = None
+
+
+class ArticleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source: str
+    outlet: str
+    title: str
+    url: str
+    published_at: datetime | None
+    engagement: int
+
+
+class ScoresOut(BaseModel):
+    match: float | None
+    buzz: float
+    freshness: float
+    combined: float | None
+
+
+class StoryOut(BaseModel):
+    id: int
+    segment_id: int
+    headline: str
+    status: str
+    scores: ScoresOut
+    reason: str | None
+    scored_version: int | None
+    published_at: datetime | None
+    first_seen: datetime
+    last_seen: datetime
+    runs_seen: int
+    dismissed: bool
+    outlets: list[str]
+    articles: list[ArticleOut]

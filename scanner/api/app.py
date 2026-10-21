@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import sessionmaker
 
-from scanner.api import auth, segments
+from scanner.api import auth, runs, segments, stories
 from scanner.config import Settings, get_settings
 from scanner.db import init_db, make_engine, make_sessionmaker
 from scanner.llm.base import LLMClient, LLMError, RateLimited
@@ -52,5 +52,7 @@ def create_app(settings: Settings | None = None, *, llm: LLMClient | None = None
 
     api.include_router(auth.router)
     api.include_router(segments.router)
+    api.include_router(stories.router)
+    api.include_router(runs.router)
     app.include_router(api)
     return app
