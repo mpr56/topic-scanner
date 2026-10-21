@@ -34,6 +34,19 @@ def test_parse_feed():
     assert (b.outlet, b.published_at) == ("BBC News", None)
 
 
+def test_fetch_follows_redirects(now):
+    xml = (FIXTURES / "google_news.xml").read_text()
+
+    def handler(req):
+        if "section" in req.url.path:
+            return httpx.Response(302, headers={"location": "https://news.google.com/rss/topics/XYZ"})
+        return httpx.Response(200, text=xml)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = SourceConfig(type="google_news", mode="feed", sections=["WORLD"])
+    assert len(GoogleNewsSource().fetch(cfg, http, now)) == 2
+
+
 def test_fetch_raises_source_error_on_http_failure(now):
     http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503)))
     with pytest.raises(SourceError, match="503"):

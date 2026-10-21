@@ -34,7 +34,7 @@ class Source(Protocol):
 
 def _get(http: httpx.Client, url: str, **kw) -> httpx.Response:
     try:
-        resp = http.get(url, **kw)
+        resp = http.get(url, follow_redirects=True, **kw)
     except httpx.HTTPError as exc:
         raise SourceError(f"request to {httpx.URL(url).host} failed: {exc}") from exc
     if not resp.is_success:
