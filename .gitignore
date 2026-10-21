@@ -1,0 +1,8 @@
+*/docs
+.claude/settings.json
+.venv/
+__pycache__/
+*.db
+.env
+*.egg-info/
+.pytest_cache/
