@@ -18,6 +18,9 @@ class FakeLLM:
         self._responses = list(responses)
         self.calls: list[FakeCall] = []
 
+    def queue(self, *responses) -> None:
+        self._responses.extend(responses)
+
     def complete_json(self, system: str, user: str, *, model: str) -> LLMResult:
         self.calls.append(FakeCall(system, user, model))
         if not self._responses:

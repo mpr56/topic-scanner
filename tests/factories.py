@@ -44,3 +44,6 @@ def make_article(session, story, **overrides) -> Article:
     session.add(article)
     session.flush()
     return article
+
+DEF = {"summary": "Major world events", "sources": [{"type": "google_news", "mode": "feed"}]}
+BODY = {"name": "Big news", "examples": ["Tesla Roadster flies"], "definition": DEF}
