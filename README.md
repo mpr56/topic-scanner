@@ -2,7 +2,7 @@
 
 A personal trend tracker. You describe a **segment** with a few example stories, an AI works out what they have in common, and every hour or two the scanner pulls fresh news, groups the coverage into stories, and scores each story by **match**, **buzz** and **freshness**.
 
-This repo is the backend: a Python package (`scanner`), a FastAPI app under `/api`, and a GitHub Actions cron that runs the scans.
+This repo has the backend (a Python package `scanner`, a FastAPI app under `/api`, and a GitHub Actions cron that runs the scans) and a small React UI in `web/`.
 
 ## Local setup
 
@@ -19,6 +19,23 @@ cp .env.example .env               # add GROQ_API_KEY, API_TOKEN, APP_PASSWORD; 
 Other commands: `init-db` (create tables) and `run-due` (scan every segment whose interval has elapsed; this is what cron calls).
 
 The starter segment's examples ("Tesla Roadster flies in public demo", "Political upheaval in France") are placeholders. Edit them.
+
+### UI
+
+```bash
+cd web
+npm install
+npm run dev      # http://localhost:5173 (use `npm run dev -- --port 5174` if that port is taken)
+npm test         # unit tests for the formatting helpers
+```
+
+The dev server proxies `/api` to `http://localhost:8000` (override with `API_URL` in the root `.env`). If the root `.env` has an `API_TOKEN`, the proxy attaches it server-side, so you don't need to log in locally. Without one, set `APP_PASSWORD` and `COOKIE_SECURE=false` and log in.
+
+- **Topics** (home): every segment with its last run, new-story count and last 30 runs; "+ New topic" drafts a definition with the AI (or starts from a plain one) and saves it.
+- **Topic page**: stories (filter to the ones a given run found, sort, dismiss/restore, expand to see articles), runs, and a setup tab to edit everything, redraft with AI, pause or delete.
+- **Runs**: recent scans across all topics.
+
+Pages refresh every 30 seconds, so scans started by the CLI or cron show up on their own.
 
 ## How a segment works
 
@@ -64,4 +81,4 @@ Every route except `/api/health` needs either the session cookie from `POST /api
 
 ### Reddit
 
-Reddit blocks unauthenticated JSON requests from many networks, including GitHub's runners and, in testing, home connections (`403 Blocked`). When that happens, the run records the error and carries on with the other sources. To fix it, create a free "script" app at reddit.com/prefs/apps and set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`. The scanner then uses app-only OAuth.
+Reddit blocks unauthenticated JSON requests from many networks, including GitHub's runners and, in testing, home connections (`403 Blocked`). When that happens, the run records the error and carries on with the other sources. If you have Reddit app credentials, set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` and the scanner uses app-only OAuth. Reddit stopped issuing new keys through reddit.com/prefs/apps in November 2025; new access goes through a manual request to Reddit under its Responsible Builder Policy.
