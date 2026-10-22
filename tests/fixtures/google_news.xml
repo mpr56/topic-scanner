@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Top stories - Google News</title>
+    <link>https://news.google.com/</link>
+    <item>
+      <title>Tesla Roadster flies - Reuters</title>
+      <link>https://news.google.com/rss/articles/abc</link>
+      <pubDate>Tue, 21 Oct 2026 10:00:00 GMT</pubDate>
+      <description>&lt;a href="x"&gt;Tesla Roadster flies&lt;/a&gt;&amp;nbsp;Reuters</description>
+      <source url="https://reuters.com">Reuters</source>
+    </item>
+    <item>
+      <title>France names new PM - BBC News</title>
+      <link>https://news.google.com/rss/articles/def</link>
+      <source url="https://bbc.co.uk">BBC News</source>
+    </item>
+  </channel>
+</rss>
