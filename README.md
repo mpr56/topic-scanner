@@ -65,6 +65,7 @@ Every route except `/api/health` needs either the session cookie from `POST /api
 | POST | `/api/segments/{id}/rescore?hours=48` | re-rate recent stories not yet scored on the current definition → `{rescored, remaining}` |
 | POST | `/api/segments/{id}/run` | scan now (inline locally, GitHub dispatch in prod) |
 | GET | `/api/runs?segment_id=` | recent runs with status and per-source errors |
+| GET | `/api/actions/status` | the newest finished GitHub Actions scan if it failed, with the failed step → `{failure}` (`null` when it passed or GitHub isn't configured) |
 
 ## Deploy
 
@@ -75,9 +76,11 @@ Every route except `/api/health` needs either the session cookie from `POST /api
    - Variables (optional): `GROQ_MODEL_SCORE`, `RUN_TOKEN_BUDGET`
 4. **Vercel** (serves the API; scraping never runs inside a Vercel request in prod). Import the repo and set these env vars:
    - `DATABASE_URL`, `GROQ_API_KEY`, `API_TOKEN`, `APP_PASSWORD`, `SESSION_SECRET` (long random string; login is refused while it is left at the default), `UI_ORIGIN`
-   - `RUN_NOW_MODE=github`, `GITHUB_REPO=owner/topic-scanner`, `GITHUB_TOKEN` (fine-grained token with **Actions: write** on this repo), `GITHUB_REF=main`
+   - `RUN_NOW_MODE=github`, `GITHUB_REPO=owner/topic-scanner`, `GITHUB_TOKEN` (fine-grained token with **Actions: read and write** on this repo), `GITHUB_REF=main`
 
-   Deploy the UI in the same Vercel project later so the login cookie stays same-origin.
+   The token also lets the UI show a banner when the last Actions scan failed. That covers jobs that die before reaching the database (missing secrets, a broken install), which never record a run.
+
+   The UI is built and served from the same Vercel project (see `vercel.json`) so the login cookie stays same-origin.
 
 ### Reddit
 
