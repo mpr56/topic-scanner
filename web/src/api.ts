@@ -1,4 +1,4 @@
-import type { Run, RunNowResult, Segment, SegmentDefinition, SegmentInput, Story } from './types'
+import type { ActionsStatus, Run, RunNowResult, Segment, SegmentDefinition, SegmentInput, Story } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -74,4 +74,5 @@ export const api = {
     return request<Run[]>(`/runs?${q}`)
   },
   runNow: (segmentId: number) => post<RunNowResult>(`/segments/${segmentId}/run`),
+  actionsStatus: () => request<ActionsStatus>('/actions/status'),
 }
