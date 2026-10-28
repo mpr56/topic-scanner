@@ -81,6 +81,59 @@ def test_run_now_github_failure_is_502(make_client):
     assert c.post(f"/api/segments/{sid}/run").status_code == 502
 
 
+def github_api(runs, jobs=(), status=200):
+    """Fake GitHub API: `runs` for the workflow-runs listing, `jobs` for any run's jobs listing."""
+    seen = []
+
+    def handle(r):
+        seen.append(r)
+        if status != 200:
+            return httpx.Response(status)
+        if r.url.path.endswith("/jobs"):
+            return httpx.Response(200, json={"jobs": list(jobs)})
+        return httpx.Response(200, json={"workflow_runs": list(runs)})
+
+    return httpx.Client(transport=httpx.MockTransport(handle)), seen
+
+
+GH_RUN = {"id": 99, "run_number": 12, "event": "schedule", "status": "completed", "conclusion": "failure",
+          "html_url": "https://github.com/o/r/actions/runs/99", "created_at": "2026-10-28T03:07:12Z"}
+
+
+def test_actions_status_reports_latest_failure(make_client):
+    jobs = [{"steps": [{"name": "Set up job", "conclusion": "success"},
+                       {"name": "Run python -m scanner init-db", "conclusion": "failure"},
+                       {"name": "Scan", "conclusion": "skipped"}]}]
+    http, seen = github_api([GH_RUN], jobs)
+    c = make_client(github_token="gh", github_repo="o/r", http=http)
+    assert c.get("/api/actions/status").json() == {"failure": {
+        "run_number": 12, "event": "schedule", "conclusion": "failure", "created_at": "2026-10-28T03:07:12Z",
+        "html_url": "https://github.com/o/r/actions/runs/99", "failed_step": "Run python -m scanner init-db"}}
+    assert str(seen[0].url).startswith("https://api.github.com/repos/o/r/actions/workflows/scan.yml/runs?")
+    assert seen[0].url.params["status"] == "completed"
+    assert seen[0].headers["authorization"] == "Bearer gh"
+    assert str(seen[1].url) == "https://api.github.com/repos/o/r/actions/runs/99/jobs"
+
+
+def test_actions_status_clear_after_success(make_client):
+    http, seen = github_api([{**GH_RUN, "conclusion": "success"}])
+    c = make_client(github_token="gh", github_repo="o/r", http=http)
+    assert c.get("/api/actions/status").json() == {"failure": None}
+    assert len(seen) == 1  # no jobs lookup
+
+
+def test_actions_status_without_github_config(make_client):
+    http, seen = github_api([GH_RUN])
+    assert make_client(http=http).get("/api/actions/status").json() == {"failure": None}
+    assert seen == []
+
+
+def test_actions_status_github_error_is_502(make_client):
+    http, _ = github_api([], status=401)
+    c = make_client(github_token="gh", github_repo="o/r", http=http)
+    assert c.get("/api/actions/status").status_code == 502
+
+
 def test_rescore_endpoint(client, seeded, fake_llm):
     fake_llm.queue({"results": []})
     assert client.post(f"/api/segments/{seeded.segment_id}/rescore").json() == {"rescored": 0, "remaining": 0}
