@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { UNAUTHORIZED_EVENT, api } from './api'
+import { ActionsBanner } from './components'
 import { ago } from './format'
-import { ToastContext, useLoad, useNow } from './hooks'
+import { ToastContext, useLoad, useNow, usePoll } from './hooks'
 import Login from './pages/Login'
 import Runs from './pages/Runs'
 import Settings from './pages/Settings'
@@ -40,6 +41,10 @@ function Shell({ onLoggedOut }: { onLoggedOut: () => void }) {
   // Refresh the sidebar on every navigation; it's one small request.
   const { data: segments, error } = useLoad(api.segments, [location.pathname])
   const lastRun = segments?.map(s => s.last_run_at).filter((t): t is string => !!t).sort().at(-1) ?? null
+  // GitHub Actions failures that never reached the database, so they don't show up as runs.
+  const actions = useLoad(api.actionsStatus, [])
+  usePoll(actions.reload, 60_000)
+  const failure = actions.data?.failure
 
   return (
     <div className="shell">
@@ -59,6 +64,7 @@ function Shell({ onLoggedOut }: { onLoggedOut: () => void }) {
           </div>
         </nav>
         <main className="main">
+          {failure && <ActionsBanner failure={failure} now={now} />}
           <Routes>
             <Route path="/" element={<Topics />} />
             <Route path="/topics/:id" element={<Topic />} />
