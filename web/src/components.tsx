@@ -1,8 +1,26 @@
 import { useState, type ReactNode } from 'react'
 import { ago, score, tone, type Tone } from './format'
-import type { Run, Story } from './types'
+import type { ActionsFailure, Run, Story } from './types'
 
 export const Dot = ({ t }: { t: Tone }) => <span className={`dot t-${t}`} />
+
+const OUTCOME: Record<ActionsFailure['conclusion'], string> = {
+  failure: 'failed', timed_out: 'timed out', startup_failure: "couldn't start",
+}
+
+/** Shown while the newest finished GitHub Actions scan failed; clears once a later one succeeds. */
+export function ActionsBanner({ failure, now }: { failure: ActionsFailure; now: number }) {
+  return (
+    <div className="banner bad">
+      <span>
+        <Dot t="bad" />
+        The last {failure.event === 'schedule' ? 'scheduled ' : ''}GitHub Actions scan (#{failure.run_number}, {ago(failure.created_at, now)}) {OUTCOME[failure.conclusion]}
+        {failure.failed_step && <> at <span className="mono">{failure.failed_step}</span></>}
+      </span>
+      <a href={failure.html_url} target="_blank" rel="noreferrer">View log</a>
+    </div>
+  )
+}
 
 export function Stat({ label, value, note, color }: { label: string; value: ReactNode; note?: ReactNode; color?: string }) {
   return (

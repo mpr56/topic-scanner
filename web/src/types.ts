@@ -100,3 +100,16 @@ export interface Story {
 }
 
 export type RunNowResult = { mode: 'inline'; run: Run } | { mode: 'github' }
+
+export interface ActionsFailure {
+  run_number: number
+  event: string
+  conclusion: 'failure' | 'timed_out' | 'startup_failure'
+  created_at: string
+  html_url: string
+  failed_step: string | null
+}
+
+export interface ActionsStatus {
+  failure: ActionsFailure | null
+}

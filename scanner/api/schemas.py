@@ -61,6 +61,19 @@ class RunOut(BaseModel):
     errors: list[dict]
 
 
+class ActionsFailureOut(BaseModel):
+    run_number: int
+    event: str
+    conclusion: str
+    created_at: datetime
+    html_url: str
+    failed_step: str | None
+
+
+class ActionsStatusOut(BaseModel):
+    failure: ActionsFailureOut | None
+
+
 class SegmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
